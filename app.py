@@ -5,7 +5,7 @@ import plotly.express as px
 # Cấu hình trang
 st.set_page_config(page_title="PHẦN MỀM TÍNH TIỀN LƯƠNG HV ĐẶNG NGỌC SANG", page_icon="💰", layout="centered")
 
-st.title("Ứng Dụng Tính Thuế TNCN & Thực Lãnh")
+st.title("PHẦN MỀM TÍNH TIỀN LƯƠNG HV ĐẶNG NGỌC SANG")
 st.markdown("Nhập các thông số thu nhập bên dưới (Đơn vị: Triệu đồng). Kết quả sẽ tự động tính toán.")
 st.markdown("---")
 
