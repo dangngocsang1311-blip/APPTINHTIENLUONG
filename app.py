@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 
 # Cấu hình trang
-st.set_page_config(page_title="Máy Tính Thuế TNCN", page_icon="💰", layout="centered")
+st.set_page_config(page_title="PHẦN MỀM TÍNH TIỀN LƯƠNG_ HV ĐẶNG NGỌC SANG", page_icon="💰", layout="centered")
 
 st.title("Ứng Dụng Tính Thuế TNCN & Thực Lãnh")
 st.markdown("Nhập các thông số thu nhập bên dưới (Đơn vị: Triệu đồng). Kết quả sẽ tự động tính toán.")
