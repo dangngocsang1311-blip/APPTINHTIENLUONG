@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-st.image("LOGO.jpg")
+st.image("LOGO.JPG")
 import pandas as pd
 import plotly.express as px
 
