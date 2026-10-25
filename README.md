@@ -1,2 +1,2 @@
-# APPTINHTIENLUONG
-APP tính tiền lương bởi Đặng Ngọc Sang
+# APPTINHDAUTUCONG
+APP TÍNH ĐẦU TƯ CÔNG bởi Đặng Ngọc Sang
