@@ -1,131 +1,129 @@
-class ProjectAppraisalApp:
-    def __init__(self, initial_investment, discount_rate, project_years, annual_cash_flows):
-        """
-        Khởi tạo đối tượng tính toán các chỉ số dự án.
-        
-        :param initial_investment: Vốn đầu tư ban đầu (Tỷ đồng). Luôn là số dương (code sẽ tự động chuyển thành số âm).
-        :param discount_rate: Lãi suất chiết khấu (dạng số thập phân, VD: 20% = 0.20)
-        :param project_years: Số năm hoạt động của dự án (Tương ứng với số lượng dòng tiền các năm).
-        :param annual_cash_flows: Mảng chứa dòng tiền thuần các năm (từ năm 1 đến năm n).
-        """
-        self.r = discount_rate
-        self.n = project_years
-        
-        # Kiểm tra tính hợp lệ của dữ liệu đầu vào
-        if len(annual_cash_flows) != self.n:
-            raise ValueError(f"Lỗi: Số lượng dòng tiền ({len(annual_cash_flows)}) không khớp với số năm dự án ({self.n}).")
-            
-        # Ghép vốn đầu tư (năm 0, mang dấu âm) với dòng tiền các năm
-        self.cfs = [-abs(initial_investment)] + annual_cash_flows
+import streamlit as st
+import pandas as pd
+import numpy as np
+import numpy_financial as npf
 
-    def calculate_npv(self):
-        """1. Tính Giá trị hiện tại ròng (NPV) - Đơn vị: Tỷ đồng"""
-        npv = sum(cf / (1 + self.r)**t for t, cf in enumerate(self.cfs))
-        return npv
+# --- CÁC HÀM CORE LOGIC XỬ LÝ TÍNH TOÁN ---
+def calculate_npv(rate, cash_flows):
+    """Tính Giá trị hiện tại ròng (NPV)"""
+    return npf.npv(rate, cash_flows)
 
-    def calculate_irr(self, iterations=1000, tolerance=1e-6):
-        """2. Tính Tỷ suất sinh lời nội bộ (IRR) bằng phương pháp nội suy"""
-        low, high = -0.99, 2.0 # Giới hạn tìm kiếm từ -99% đến 200%
-        for _ in range(iterations):
-            mid = (low + high) / 2
-            current_npv = sum(cf / (1 + mid)**t for t, cf in enumerate(self.cfs))
-            
-            if abs(current_npv) < tolerance:
-                return mid
-            
-            if current_npv > 0:
-                low = mid
-            else:
-                high = mid
-        return mid
-
-    def calculate_mirr(self):
-        """3. Tính Tỷ suất sinh lời nội bộ có điều chỉnh (MIRR)"""
-        # PV của dòng tiền âm (Quy về năm 0)
-        pv_outflows = sum(cf / (1 + self.r)**t for t, cf in enumerate(self.cfs) if cf < 0)
-        # FV của dòng tiền dương (Quy về năm cuối cùng n)
-        fv_inflows = sum(cf * (1 + self.r)**(self.n - t) for t, cf in enumerate(self.cfs) if cf > 0)
-        
-        if pv_outflows == 0:
-            return 0
-            
-        mirr = (fv_inflows / abs(pv_outflows))**(1 / self.n) - 1
-        return mirr
-
-    def calculate_pi(self):
-        """4. Tính Chỉ số lợi nhuận (PI)"""
-        pv_outflows = sum(cf / (1 + self.r)**t for t, cf in enumerate(self.cfs) if cf < 0)
-        pv_inflows = sum(cf / (1 + self.r)**t for t, cf in enumerate(self.cfs) if cf > 0)
-        
-        if pv_outflows == 0:
-            return 0
-            
-        return pv_inflows / abs(pv_outflows)
-
-    def calculate_pp(self):
-        """5. Tính Thời gian hoàn vốn không chiết khấu (PP) - Đơn vị: Năm"""
-        cumulative = 0
-        for t, cf in enumerate(self.cfs):
-            cumulative += cf
-            if cumulative >= 0:
-                if t == 0: return 0
-                # Tính phần năm lẻ
-                prev_cumulative = cumulative - cf
-                return (t - 1) + abs(prev_cumulative) / cf
-        return -1 # Không hòa vốn
-
-    def calculate_dpp(self):
-        """6. Tính Thời gian hoàn vốn có chiết khấu (DPP) - Đơn vị: Năm"""
-        cumulative = 0
-        for t, cf in enumerate(self.cfs):
-            discounted_cf = cf / (1 + self.r)**t
-            cumulative += discounted_cf
-            if cumulative >= 0:
-                if t == 0: return 0
-                # Tính phần năm lẻ
-                prev_cumulative = cumulative - discounted_cf
-                return (t - 1) + abs(prev_cumulative) / discounted_cf
-        return -1 # Không hòa vốn
-
-    def get_results(self):
-        """Hàm xuất toàn bộ kết quả dưới dạng Dictionary (thích hợp làm API trả về JSON)"""
-        pp = self.calculate_pp()
-        dpp = self.calculate_dpp()
-        
-        return {
-            "NPV": round(self.calculate_npv(), 2),
-            "IRR": round(self.calculate_irr() * 100, 2),    # Đổi ra %
-            "MIRR": round(self.calculate_mirr() * 100, 2),  # Đổi ra %
-            "PI": round(self.calculate_pi(), 4),
-            "PP": round(pp, 2) if pp != -1 else "Không hoàn vốn",
-            "DPP": round(dpp, 2) if dpp != -1 else "Không hoàn vốn"
-        }
-
-# ================= CÁCH GỌI VÀ SỬ DỤNG TRONG APP =================
-if __name__ == "__main__":
+def calculate_irr(cash_flows):
+    """Tính Tỷ suất sinh lời nội bộ (IRR)"""
     try:
-        # Lấy dữ liệu giả định từ Form nhập liệu của App
-        input_data = {
-            "initial_investment": 1000,           # Vốn đầu tư (tự động nhận dấu âm trong code)
-            "discount_rate": 0.20,                # Lãi suất chiết khấu 20%
-            "project_years": 5,                   # Số năm dự án
-            "annual_cash_flows": [500, -100, 400, 1000, 1800] # Dòng tiền từ năm 1 đến 5
-        }
+        return npf.irr(cash_flows)
+    except:
+        return None
+
+def calculate_mirr(rate, cash_flows):
+    """Tính Tỷ suất sinh lời nội bộ có điều chỉnh (MIRR)"""
+    return npf.mirr(cash_flows, finance_rate=rate, reinvest_rate=rate)
+
+def calculate_pi(rate, cash_flows):
+    """Tính Chỉ số lợi nhuận (PI)"""
+    pv_outflows = sum(cf / (1 + rate)**i for i, cf in enumerate(cash_flows) if cf < 0)
+    pv_inflows = sum(cf / (1 + rate)**i for i, cf in enumerate(cash_flows) if cf > 0)
+    if pv_outflows == 0:
+        return 0
+    return pv_inflows / abs(pv_outflows)
+
+def calculate_pp(cash_flows):
+    """Tính Thời gian hoàn vốn không chiết khấu (PP)"""
+    cumulative_cf = np.cumsum(cash_flows)
+    for i in range(len(cumulative_cf) - 1):
+        if cumulative_cf[i] < 0 and cumulative_cf[i+1] >= 0:
+            # Áp dụng công thức nội suy tìm số tháng
+            return i + abs(cumulative_cf[i]) / cash_flows[i+1]
+    return -1 # Không hoàn vốn
+
+def calculate_dpp(rate, cash_flows):
+    """Tính Thời gian hoàn vốn có chiết khấu (DPP)"""
+    discounted_cfs = [cf / (1 + rate)**i for i, cf in enumerate(cash_flows)]
+    cumulative_dcf = np.cumsum(discounted_cfs)
+    for i in range(len(cumulative_dcf) - 1):
+        if cumulative_dcf[i] < 0 and cumulative_dcf[i+1] >= 0:
+             # Áp dụng công thức nội suy tìm số tháng
+            return i + abs(cumulative_dcf[i]) / discounted_cfs[i+1]
+    return -1 # Không hoàn vốn
+
+# --- XÂY DỰNG GIAO DIỆN APP (UI) ---
+st.set_page_config(page_title="App Thẩm Định Tài Chính Dự Án", layout="wide")
+
+st.title("📊 Ứng dụng Thẩm định Tài chính Dự án Đầu tư")
+st.markdown("---")
+
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.header("Nhập liệu")
+    initial_investment = st.number_input(
+        "Vốn đầu tư ban đầu (Tỷ đồng - Nhập số dương, phần mềm sẽ tự hiểu là dòng tiền âm năm 0):", 
+        min_value=0.0, value=1000.0, step=10.0
+    )
+    discount_rate_percent = st.number_input(
+        "Lãi suất chiết khấu (%):", 
+        min_value=0.0, max_value=100.0, value=20.0, step=1.0
+    )
+    project_years = st.number_input(
+        "Số năm của dự án (Không tính năm 0):", 
+        min_value=1, max_value=50, value=5, step=1
+    )
+    
+    discount_rate = discount_rate_percent / 100.0
+    
+    st.subheader("Dòng tiền các năm (Tỷ đồng)")
+    cash_flows_input = []
+    # Tự động render số ô nhập liệu tương ứng với số năm dự án
+    for i in range(1, project_years + 1):
+        cf = st.number_input(f"Dòng tiền Năm {i}:", value=0.0, step=10.0, key=f"cf_{i}")
+        cash_flows_input.append(cf)
         
-        # Khởi tạo thuật toán
-        app = ProjectAppraisalApp(**input_data)
+    calculate_btn = st.button("Tính toán các chỉ số", type="primary")
+
+with col2:
+    st.header("Kết quả tính toán")
+    if calculate_btn:
+        # Gom vốn đầu tư năm 0 và dòng tiền các năm thành 1 mảng
+        cash_flows = [-initial_investment] + cash_flows_input
         
-        # Trả kết quả tính toán
-        results = app.get_results()
+        # Bảng hiển thị thông số dòng tiền
+        df_cf = pd.DataFrame({"Năm": range(project_years + 1), "Dòng tiền (Tỷ đồng)": cash_flows})
+        st.write("**Bảng dòng tiền dự án:**")
+        st.dataframe(df_cf.set_index("Năm").T, use_container_width=True)
         
-        # In ra màn hình console (hoặc trả về Frontend)
-        print("--- KẾT QUẢ THẨM ĐỊNH DỰ ÁN ---")
-        print(f"1. Giá trị hiện tại ròng (NPV) : {results['NPV']} (Tỷ đồng)")
-        print(f"2. Tỷ suất sinh lời nội bộ (IRR) : {results['IRR']} %")
-        print(f"3. Tỷ suất sinh lời nội bộ có điều chỉnh (MIRR) : {results['MIRR']} %")
-        print(f"4. Chỉ số lợi nhuận (PI) : {results['PI']}")
-        print(f"5. Thời gian hoàn vốn không chiết khấu (PP) : {results['PP']} năm")
-        print(f"6. Thời gian hoàn vốn có chiết khấu (DPP) : {results['DPP']} năm")
+        st.markdown("### Các chỉ số tài chính")
         
-    except ValueError as e:
-        print(e)
+        # Chạy logic tính toán
+        npv = calculate_npv(discount_rate, cash_flows)
+        irr = calculate_irr(cash_flows)
+        mirr = calculate_mirr(discount_rate, cash_flows)
+        pi = calculate_pi(discount_rate, cash_flows)
+        pp = calculate_pp(cash_flows)
+        dpp = calculate_dpp(discount_rate, cash_flows)
+        
+        # Render kết quả ra màn hình Dashboard
+        c1, c2, c3 = st.columns(3)
+        c1.metric(label="Giá trị hiện tại ròng (NPV)", value=f"{npv:,.2f} Tỷ", delta="Khả thi" if npv > 0 else "Không khả thi")
+        
+        if irr is not None:
+            c2.metric(label="Tỷ suất sinh lời nội bộ (IRR)", value=f"{irr*100:,.2f} %", delta="Lớn hơn chiết khấu" if irr > discount_rate else "Nhỏ hơn chiết khấu")
+        else:
+             c2.metric(label="Tỷ suất sinh lời nội bộ (IRR)", value="Không xác định")
+             
+        c3.metric(label="Chỉ số lợi nhuận (PI)", value=f"{pi:,.3f}", delta="> 1 (Tốt)" if pi > 1 else "< 1 (Kém)")
+        
+        c4, c5, c6 = st.columns(3)
+        if not np.isnan(mirr):
+             c4.metric(label="IRR có điều chỉnh (MIRR)", value=f"{mirr*100:,.2f} %")
+        else:
+             c4.metric(label="IRR có điều chỉnh (MIRR)", value="N/A")
+             
+        c5.metric(label="Thời gian hoàn vốn (PP)", value=f"{pp:,.2f} năm" if pp != -1 else "Không hoàn vốn")
+        c6.metric(label="Thời gian hoàn vốn có chiết khấu (DPP)", value=f"{dpp:,.2f} năm" if dpp != -1 else "Không hoàn vốn")
+        
+        # Khối Kết luận tự động
+        st.markdown("### Kết luận chung")
+        if npv > 0 and (irr is not None and irr > discount_rate):
+            st.success(f"**DỰ ÁN KHẢ THI:** NPV dương ({npv:,.2f} tỷ đồng) và IRR ({irr*100:,.2f}%) lớn hơn mức lãi suất chiết khấu ({discount_rate_percent}%).")
+        else:
+            st.error(f"**DỰ ÁN KHÔNG KHẢ THI:** NPV âm ({npv:,.2f} tỷ đồng) hoặc IRR ({irr*100:,.2f}%) nhỏ hơn mức lãi suất chiết khấu ({discount_rate_percent}%).")
