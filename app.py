@@ -1,106 +1,131 @@
-import streamlit as st
-import os
-import pandas as pd
-import plotly.express as px
-from io import BytesIO
-
-# 1. CẤU HÌNH TRANG (BẮT BUỘC TRÊN CÙNG)
-# Chuyển layout sang "wide" để bảng hiển thị rộng rãi, dễ nhìn cho nhiều người
-st.set_page_config(page_title="PHẦN MỀM TÍNH LƯƠNG HÀNG LOẠT", page_icon="💰", layout="wide")
-
-# Kiểm tra và hiển thị Logo
-if os.path.exists("LOGO.JPG"):
-    st.image("LOGO.JPG")
-elif os.path.exists("logo.jpg"):
-    st.image("logo.jpg")
-
-st.title("PHẦN MỀM TÍNH TIỀN LƯƠNG HÀNG LOẠT HV ĐẶNG NGỌC SANG")
-st.markdown("Hỗ trợ tính toán nhanh gọn cho tối đa 500 người lao động. Bạn có thể thay đổi dữ liệu trực tiếp trên bảng hoặc copy/paste từ file Excel có sẵn.")
-st.markdown("---")
-
-# 2. CHỌN SỐ LƯỢNG NGƯỜI LAO ĐỘNG
-col_input, _ = st.columns([1, 2])
-with col_input:
-    num_employees = st.number_input("Chọn số lượng nhân viên cần tính toán (Từ 1 - 500):", 
-                                    min_value=1, max_value=500, value=5, step=1)
-
-# 3. TẠO BẢNG NHẬP LIỆU (DATAFRAME)
-# Khởi tạo dữ liệu mặc định dựa trên số lượng đã chọn
-default_data = {
-    "Mã NV": [f"NV{i:03d}" for i in range(1, num_employees + 1)],
-    "Họ Tên": [f"Nhân viên {i}" for i in range(1, num_employees + 1)],
-    "Lương CB (Tr)": [15.0] * num_employees,
-    "Thưởng (Tr)": [2.0] * num_employees,
-    "PC có BHXH (Tr)": [3.0] * num_employees,
-    "PC không BHXH (Tr)": [1.0] * num_employees,
-    "Số NPT (Người)": [1] * num_employees
-}
-
-df_input = pd.DataFrame(default_data)
-
-st.markdown("### 📝 BẢNG NHẬP LIỆU ĐẦU VÀO")
-st.caption("Mẹo: Chọn ô đầu tiên của bảng và nhấn Ctrl+V / Cmd+V để dán dữ liệu từ Excel vào.")
-
-# Trình chỉnh sửa dữ liệu trên web
-edited_df = st.data_editor(df_input, num_rows="dynamic", use_container_width=True)
-
-# 4. XỬ LÝ LOGIC TÍNH TOÁN KHI BẤM NÚT
-if st.button("TÍNH LƯƠNG HÀNG LOẠT", type="primary", use_container_width=True):
-    # Tạo bản sao để chứa kết quả
-    df_res = edited_df.copy()
-    
-    # Tính Tổng thu nhập và BHXH
-    df_res["Tổng Thu Nhập"] = df_res["Lương CB (Tr)"] + df_res["Thưởng (Tr)"] + df_res["PC có BHXH (Tr)"] + df_res["PC không BHXH (Tr)"]
-    df_res["Tiền Đóng BHXH"] = (df_res["Lương CB (Tr)"] + df_res["PC có BHXH (Tr)"]) * 0.105
-    
-    # Tính Thu nhập chịu thuế (Loại trừ phụ cấp không BHXH/miễn thuế)
-    df_res["TN Chịu Thuế"] = df_res["Lương CB (Tr)"] + df_res["Thưởng (Tr)"] + df_res["PC có BHXH (Tr)"]
-    
-    # Tính Tổng giảm trừ và Thu nhập tính thuế (TNTT)
-    df_res["Tổng Giảm Trừ"] = 15.5 + (6.2 * df_res["Số NPT (Người)"]) + df_res["Tiền Đóng BHXH"]
-    df_res["TNTT"] = (df_res["TN Chịu Thuế"] - df_res["Tổng Giảm Trừ"]).clip(lower=0)
-    
-    # Hàm tính thuế lũy tiến 5 bậc
-    def calc_tax(t):
-        if t <= 0: return 0.0
-        elif t <= 10: return t * 0.05
-        elif t <= 30: return t * 0.1 - 0.5
-        elif t <= 60: return t * 0.2 - 3.5
-        elif t <= 100: return t * 0.3 - 9.5
-        else: return t * 0.35 - 14.5
+class ProjectAppraisalApp:
+    def __init__(self, initial_investment, discount_rate, project_years, annual_cash_flows):
+        """
+        Khởi tạo đối tượng tính toán các chỉ số dự án.
         
-    df_res["Thuế TNCN"] = df_res["TNTT"].apply(calc_tax)
-    
-    # Tính Thực lãnh
-    df_res["Thực Lãnh"] = df_res["Tổng Thu Nhập"] - df_res["Tiền Đóng BHXH"] - df_res["Thuế TNCN"]
-    
-    # Làm tròn 2 chữ số thập phân cho gọn gàng
-    cols_to_round = ["Tổng Thu Nhập", "Tiền Đóng BHXH", "TN Chịu Thuế", "Tổng Giảm Trừ", "TNTT", "Thuế TNCN", "Thực Lãnh"]
-    df_res[cols_to_round] = df_res[cols_to_round].round(2)
+        :param initial_investment: Vốn đầu tư ban đầu (Tỷ đồng). Luôn là số dương (code sẽ tự động chuyển thành số âm).
+        :param discount_rate: Lãi suất chiết khấu (dạng số thập phân, VD: 20% = 0.20)
+        :param project_years: Số năm hoạt động của dự án (Tương ứng với số lượng dòng tiền các năm).
+        :param annual_cash_flows: Mảng chứa dòng tiền thuần các năm (từ năm 1 đến năm n).
+        """
+        self.r = discount_rate
+        self.n = project_years
+        
+        # Kiểm tra tính hợp lệ của dữ liệu đầu vào
+        if len(annual_cash_flows) != self.n:
+            raise ValueError(f"Lỗi: Số lượng dòng tiền ({len(annual_cash_flows)}) không khớp với số năm dự án ({self.n}).")
+            
+        # Ghép vốn đầu tư (năm 0, mang dấu âm) với dòng tiền các năm
+        self.cfs = [-abs(initial_investment)] + annual_cash_flows
 
-    # 5. HIỂN THỊ KẾT QUẢ
-    st.markdown("---")
-    st.markdown("### 📊 BẢNG KẾT QUẢ TÍNH TOÁN CHI TIẾT")
-    st.dataframe(df_res, use_container_width=True)
-    
-    # 6. TỔNG HỢP CHI PHÍ TOÀN CÔNG TY
-    st.markdown("### 📈 TỔNG HỢP CHI PHÍ TOÀN DOANH NGHIỆP")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Tổng Quỹ Lương (Gross)", f"{df_res['Tổng Thu Nhập'].sum():,.2f} Tr")
-    m2.metric("Tổng BHXH Đã Trích", f"{df_res['Tiền Đóng BHXH'].sum():,.2f} Tr")
-    m3.metric("Tổng Nộp Thuế TNCN", f"{df_res['Thuế TNCN'].sum():,.2f} Tr")
-    m4.metric("Tổng Tiền Thực Lãnh (Net)", f"{df_res['Thực Lãnh'].sum():,.2f} Tr")
-    
-    # 7. XUẤT FILE EXCEL
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_res.to_excel(writer, index=False, sheet_name='Bang_Luong_Ket_Qua')
-    excel_data = output.getvalue()
-    
-    st.download_button(
-        label="📥 TẢI XUỐNG FILE EXCEL TỔNG HỢP (.xlsx)",
-        data=excel_data,
-        file_name="Bang_Tinh_Luong_Tong_Hop.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="secondary"
-    )
+    def calculate_npv(self):
+        """1. Tính Giá trị hiện tại ròng (NPV) - Đơn vị: Tỷ đồng"""
+        npv = sum(cf / (1 + self.r)**t for t, cf in enumerate(self.cfs))
+        return npv
+
+    def calculate_irr(self, iterations=1000, tolerance=1e-6):
+        """2. Tính Tỷ suất sinh lời nội bộ (IRR) bằng phương pháp nội suy"""
+        low, high = -0.99, 2.0 # Giới hạn tìm kiếm từ -99% đến 200%
+        for _ in range(iterations):
+            mid = (low + high) / 2
+            current_npv = sum(cf / (1 + mid)**t for t, cf in enumerate(self.cfs))
+            
+            if abs(current_npv) < tolerance:
+                return mid
+            
+            if current_npv > 0:
+                low = mid
+            else:
+                high = mid
+        return mid
+
+    def calculate_mirr(self):
+        """3. Tính Tỷ suất sinh lời nội bộ có điều chỉnh (MIRR)"""
+        # PV của dòng tiền âm (Quy về năm 0)
+        pv_outflows = sum(cf / (1 + self.r)**t for t, cf in enumerate(self.cfs) if cf < 0)
+        # FV của dòng tiền dương (Quy về năm cuối cùng n)
+        fv_inflows = sum(cf * (1 + self.r)**(self.n - t) for t, cf in enumerate(self.cfs) if cf > 0)
+        
+        if pv_outflows == 0:
+            return 0
+            
+        mirr = (fv_inflows / abs(pv_outflows))**(1 / self.n) - 1
+        return mirr
+
+    def calculate_pi(self):
+        """4. Tính Chỉ số lợi nhuận (PI)"""
+        pv_outflows = sum(cf / (1 + self.r)**t for t, cf in enumerate(self.cfs) if cf < 0)
+        pv_inflows = sum(cf / (1 + self.r)**t for t, cf in enumerate(self.cfs) if cf > 0)
+        
+        if pv_outflows == 0:
+            return 0
+            
+        return pv_inflows / abs(pv_outflows)
+
+    def calculate_pp(self):
+        """5. Tính Thời gian hoàn vốn không chiết khấu (PP) - Đơn vị: Năm"""
+        cumulative = 0
+        for t, cf in enumerate(self.cfs):
+            cumulative += cf
+            if cumulative >= 0:
+                if t == 0: return 0
+                # Tính phần năm lẻ
+                prev_cumulative = cumulative - cf
+                return (t - 1) + abs(prev_cumulative) / cf
+        return -1 # Không hòa vốn
+
+    def calculate_dpp(self):
+        """6. Tính Thời gian hoàn vốn có chiết khấu (DPP) - Đơn vị: Năm"""
+        cumulative = 0
+        for t, cf in enumerate(self.cfs):
+            discounted_cf = cf / (1 + self.r)**t
+            cumulative += discounted_cf
+            if cumulative >= 0:
+                if t == 0: return 0
+                # Tính phần năm lẻ
+                prev_cumulative = cumulative - discounted_cf
+                return (t - 1) + abs(prev_cumulative) / discounted_cf
+        return -1 # Không hòa vốn
+
+    def get_results(self):
+        """Hàm xuất toàn bộ kết quả dưới dạng Dictionary (thích hợp làm API trả về JSON)"""
+        pp = self.calculate_pp()
+        dpp = self.calculate_dpp()
+        
+        return {
+            "NPV": round(self.calculate_npv(), 2),
+            "IRR": round(self.calculate_irr() * 100, 2),    # Đổi ra %
+            "MIRR": round(self.calculate_mirr() * 100, 2),  # Đổi ra %
+            "PI": round(self.calculate_pi(), 4),
+            "PP": round(pp, 2) if pp != -1 else "Không hoàn vốn",
+            "DPP": round(dpp, 2) if dpp != -1 else "Không hoàn vốn"
+        }
+
+# ================= CÁCH GỌI VÀ SỬ DỤNG TRONG APP =================
+if __name__ == "__main__":
+    try:
+        # Lấy dữ liệu giả định từ Form nhập liệu của App
+        input_data = {
+            "initial_investment": 1000,           # Vốn đầu tư (tự động nhận dấu âm trong code)
+            "discount_rate": 0.20,                # Lãi suất chiết khấu 20%
+            "project_years": 5,                   # Số năm dự án
+            "annual_cash_flows": [500, -100, 400, 1000, 1800] # Dòng tiền từ năm 1 đến 5
+        }
+        
+        # Khởi tạo thuật toán
+        app = ProjectAppraisalApp(**input_data)
+        
+        # Trả kết quả tính toán
+        results = app.get_results()
+        
+        # In ra màn hình console (hoặc trả về Frontend)
+        print("--- KẾT QUẢ THẨM ĐỊNH DỰ ÁN ---")
+        print(f"1. Giá trị hiện tại ròng (NPV) : {results['NPV']} (Tỷ đồng)")
+        print(f"2. Tỷ suất sinh lời nội bộ (IRR) : {results['IRR']} %")
+        print(f"3. Tỷ suất sinh lời nội bộ có điều chỉnh (MIRR) : {results['MIRR']} %")
+        print(f"4. Chỉ số lợi nhuận (PI) : {results['PI']}")
+        print(f"5. Thời gian hoàn vốn không chiết khấu (PP) : {results['PP']} năm")
+        print(f"6. Thời gian hoàn vốn có chiết khấu (DPP) : {results['DPP']} năm")
+        
+    except ValueError as e:
+        print(e)
